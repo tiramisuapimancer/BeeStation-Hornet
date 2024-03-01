@@ -561,7 +561,7 @@
 	ranged = TRUE
 	rapid = 65
 	rapid_fire_delay = 0.5
-	projectiletype = /obj/item/projectile/beam
+	projectiletype = /obj/projectile/beam
 	ranged_cooldown_time = 110
 	vision_range = 9
 	speak_chance = 0
@@ -784,7 +784,7 @@
 /obj/item/gun/ballistic/shotgun/lever_action
 	name = "lever action shotgun"
 	desc = "A really old shotgun with five shell capacity. This one can fit in a backpack."
-	w_class = WEIGHT_CLASS_NORMAL
+	w_class = WEIGHT_CLASS_LARGE
 	dual_wield_spread = 0
 	fire_sound_volume = 60    //tried on 90 my eardrums said goodbye
 	item_state = "leveraction"

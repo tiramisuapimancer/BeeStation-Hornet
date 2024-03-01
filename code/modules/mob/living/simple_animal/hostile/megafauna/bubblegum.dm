@@ -106,8 +106,8 @@ Difficulty: Hard
 	if(charging)
 		return
 
-	anger_modifier = CLAMP(((maxHealth - health)/30),0,20)
-	enrage_time = initial(enrage_time) * CLAMP(anger_modifier / 20, 0.5, 1)
+	anger_modifier = clamp(((maxHealth - health)/30),0,20)
+	enrage_time = initial(enrage_time) * clamp(anger_modifier / 20, 0.5, 1)
 	ranged_cooldown = world.time + 50
 
 	if(client)
@@ -259,14 +259,15 @@ Difficulty: Hard
 		new /obj/effect/temp_visual/bubblegum_hands/leftthumb(T)
 	SLEEP_CHECK_DEATH(6)
 	for(var/mob/living/L in T)
-		if(!faction_check_mob(L))
-			if(L.stat != CONSCIOUS)
-				to_chat(L, "<span class='userdanger'>[src] drags you through the blood!</span>")
-				playsound(T, 'sound/magic/enter_blood.ogg', 100, 1, -1)
-				var/turf/targetturf = get_step(src, dir)
-				L.forceMove(targetturf)
-				playsound(targetturf, 'sound/magic/exit_blood.ogg', 100, 1, -1)
-				addtimer(CALLBACK(src, PROC_REF(devour), L), 2)
+		if(faction_check_mob(L))
+			continue
+		if(L.stat == CONSCIOUS || L.stat == DEAD)
+			continue
+		to_chat(L, "<span class='userdanger'>[src] drags you through the blood!</span>")
+		playsound(T, 'sound/magic/enter_blood.ogg', 100, 1, -1)
+		var/turf/targetturf = get_step(src, dir)
+		L.forceMove(targetturf)
+		playsound(targetturf, 'sound/magic/exit_blood.ogg', 100, 1, -1)
 	SLEEP_CHECK_DEATH(1)
 
 /mob/living/simple_animal/hostile/megafauna/bubblegum/proc/blood_warp()
@@ -384,13 +385,6 @@ Difficulty: Hard
 	if(useoriginal)
 		charge(chargeat, delay, chargepast)
 
-/mob/living/simple_animal/hostile/megafauna/bubblegum/devour(mob/living/L)
-	var/turf/death_turf = get_turf(L)
-	. = ..()
-	if(. && death_turf)
-		for(var/i in 1 to 3)
-			new /mob/living/simple_animal/hostile/asteroid/hivelordbrood/slaughter(death_turf)
-
 /mob/living/simple_animal/hostile/megafauna/bubblegum/adjustBruteLoss(amount, updating_health = TRUE, forced = FALSE)
 	. = ..()
 	if(. > 0 && prob(25))
@@ -424,7 +418,7 @@ Difficulty: Hard
 		if(.)
 			recovery_time = world.time + 20 // can only attack melee once every 2 seconds but rapid_melee gives higher priority
 
-/mob/living/simple_animal/hostile/megafauna/bubblegum/bullet_act(obj/item/projectile/P)
+/mob/living/simple_animal/hostile/megafauna/bubblegum/bullet_act(obj/projectile/P)
 	if(BUBBLEGUM_IS_ENRAGED)
 		visible_message("<span class='danger'>[src] deflects the projectile; [p_they()] can't be hit with ranged weapons while enraged!</span>", "<span class='userdanger'>You deflect the projectile!</span>")
 		playsound(src, pick('sound/weapons/bulletflyby.ogg', 'sound/weapons/bulletflyby2.ogg', 'sound/weapons/bulletflyby3.ogg'), 300, 1)
@@ -560,7 +554,7 @@ Difficulty: Hard
 
 /mob/living/simple_animal/hostile/megafauna/bubblegum/proc/slaughterlings()
 	visible_message("<span class='danger'>[src] summons a shoal of slaughterlings!</span>")
-	var/max_amount = CLAMP(anger_modifier / 4, 3, 5)
+	var/max_amount = clamp(anger_modifier / 4, 3, 5)
 	for(var/H in get_pools(get_turf(src), 1))
 		if(!max_amount)
 			break

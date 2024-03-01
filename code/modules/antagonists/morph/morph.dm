@@ -29,7 +29,7 @@
 	wander = FALSE
 	attacktext = "glomps"
 	attack_sound = 'sound/effects/blobattack.ogg'
-	butcher_results = list(/obj/item/reagent_containers/food/snacks/meat/slab = 2)
+	butcher_results = list(/obj/item/food/meat/slab = 2)
 
 	var/morphed = FALSE
 	var/melee_damage_disguised = 5
@@ -286,7 +286,7 @@
 	role_name = ROLE_MORPH
 
 /datum/round_event/ghost_role/morph/spawn_role()
-	var/list/candidates = get_candidates(ROLE_MORPH, null, ROLE_MORPH)
+	var/list/candidates = get_candidates(ROLE_MORPH, /datum/role_preference/midround_ghost/morph)
 	if(!candidates.len)
 		return NOT_ENOUGH_PLAYERS
 

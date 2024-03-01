@@ -20,6 +20,9 @@
 /savefile/byond_version = MIN_COMPILER_VERSION
 #endif
 
+#ifdef FASTDMM
+#define YES_I_WANT_515
+#endif
 // Temporary 515 block until it is completely compatible.
 // AnturK says there are issues with savefiles that would make it dangerous to test merge,
 // and so this check is in place to stop serious damage.
@@ -41,6 +44,8 @@
 #define PROC_REF(X) (.proc/##X)
 /// Call by name proc reference, checks if the proc exists on given type or as a global proc
 #define TYPE_PROC_REF(TYPE, X) (##TYPE.proc/##X)
+/// Call by name verb reference, checks if the verb exists on given type or as a global verb
+#define TYPE_VERB_REF(TYPE, X) (##TYPE.verb/##X)
 /// Call by name proc reference, checks if the proc is existing global proc
 #define GLOBAL_PROC_REF(X) (/proc/##X)
 #else
@@ -48,6 +53,8 @@
 #define PROC_REF(X) (nameof(.proc/##X))
 /// Call by name proc reference, checks if the proc exists on given type or as a global proc
 #define TYPE_PROC_REF(TYPE, X) (nameof(##TYPE.proc/##X))
+/// Call by name verb reference, checks if the verb exists on given type or as a global verb
+#define TYPE_VERB_REF(TYPE, X) (nameof(##TYPE.verb/##X))
 /// Call by name proc reference, checks if the proc is existing global proc
 #define GLOBAL_PROC_REF(X) (/proc/##X)
 #endif

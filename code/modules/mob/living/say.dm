@@ -110,6 +110,9 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 		say_dead(original_message)
 		return
 
+	if(saymode && saymode.early && !saymode.handle_message(src, message, language))
+		return
+
 	if(is_muted(original_message, ignore_spam, forced) || check_emote(original_message, forced))
 		return
 
@@ -172,6 +175,8 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 		else
 			log_talk(message, LOG_SAY, forced_by = forced, custom_say_emote = message_mods[MODE_CUSTOM_SAY_EMOTE])
 
+	if(message_mods[RADIO_KEY] == RADIO_KEY_UPLINK) // only uplink needs this
+		message_mods[MODE_UNTREATED_MESSAGE] = message // let's store the original message before treating those
 	message = treat_message(message) // unfortunately we still need this
 	var/sigreturn = SEND_SIGNAL(src, COMSIG_MOB_SAY, args)
 	if(sigreturn & COMPONENT_UPPERCASE_SPEECH)
@@ -191,7 +196,7 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 		spans |= SPAN_SINGING
 
 	//This is before anything that sends say a radio message, and after all important message type modifications, so you can scumb in alien chat or something
-	if(saymode && !saymode.handle_message(src, message, language))
+	if(saymode && !saymode.early && !saymode.handle_message(src, message, language))
 		return
 	var/radio_message = message
 	if(message_mods[WHISPER_MODE])
@@ -273,10 +278,10 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 			listening -= M // remove (added by SEE_INVISIBLE_MAXIMUM)
 			continue
 		if(get_dist(M, src) > 7 || M.get_virtual_z_level() != get_virtual_z_level()) //they're out of range of normal hearing
-			if(eavesdrop_range && !(M.client.prefs.chat_toggles & CHAT_GHOSTWHISPER)) //they're whispering and we have hearing whispers at any range off
+			if(M.client?.prefs && eavesdrop_range && !M.client.prefs.read_player_preference(/datum/preference/toggle/chat_ghostwhisper)) //they're whispering and we have hearing whispers at any range off
 				listening -= M // remove (added by SEE_INVISIBLE_MAXIMUM)
 				continue
-			if(!(M.client.prefs.chat_toggles & CHAT_GHOSTEARS)) //they're talking normally and we have hearing at any range off
+			if(M.client?.prefs && !M.client.prefs.read_player_preference(/datum/preference/toggle/chat_ghostears)) //they're talking normally and we have hearing at any range off
 				listening -= M // remove (added by SEE_INVISIBLE_MAXIMUM)
 				continue
 		listening |= M
@@ -313,9 +318,9 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 	//speech bubble
 	var/list/speech_bubble_recipients = list()
 	for(var/mob/M in listening)
-		if(M.client && !(M.client.prefs.toggles & PREFTOGGLE_RUNECHAT_GLOBAL))
+		if(M.client?.prefs && !M.client.prefs.read_player_preference(/datum/preference/toggle/enable_runechat))
 			speech_bubble_recipients.Add(M.client)
-	var/image/I = image('icons/mob/talk.dmi', src, "[bubble_type][say_test(message)]", FLY_LAYER)
+	var/image/I = image('icons/mob/talk.dmi', src, "[bubble_type][say_test(message)]", (-TYPING_LAYER))
 	I.appearance_flags = APPEARANCE_UI_IGNORE_ALPHA
 	INVOKE_ASYNC(GLOBAL_PROC, GLOBAL_PROC_REF(animate_speechbubble), I, speech_bubble_recipients, 30)
 
@@ -342,7 +347,7 @@ GLOBAL_LIST_INIT(department_radio_keys, list(
 
 /mob/living/proc/is_muted(message, ignore_spam = FALSE, forced = FALSE) //Check BEFORE handling of xeno and ling channels
 	if(client)
-		if(client.prefs.muted & MUTE_IC)
+		if(client.prefs && (client.prefs.muted & MUTE_IC))
 			to_chat(src, "<span class='danger'>You cannot speak in IC (muted).</span>")
 			return TRUE
 		if(!ignore_spam && !forced && client.handle_spam_prevention(message, MUTE_IC))

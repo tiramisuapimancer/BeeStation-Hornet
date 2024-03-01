@@ -105,6 +105,8 @@
 		body += "<A href='?_src_=holder;[HrefToken()];newbankey=[M.key]'>Ban</A> "
 
 	body += "<A href='?_src_=holder;[HrefToken()];showmessageckey=[M.ckey]'>Notes</A>"
+	if(isliving(M))
+		body += " <A href='?_src_=holder;[HrefToken()];force_cryo=[REF(M)]'>Force Cryo</A> "
 	if(M.client)
 		body += " <A href='?_src_=holder;[HrefToken()];sendtoprison=[REF(M)]'>Prison</A> "
 		body += " <A href='?_src_=holder;[HrefToken()];sendbacktolobby=[REF(M)]'>Send to Lobby</A>"
@@ -240,7 +242,7 @@
 			dat += "<A href='?src=[REF(src)];[HrefToken()];f_dynamic_roundstart=1'>(Force Roundstart Rulesets)</A><br>"
 			if (GLOB.dynamic_forced_roundstart_ruleset.len > 0)
 				for(var/datum/dynamic_ruleset/roundstart/rule in GLOB.dynamic_forced_roundstart_ruleset)
-					dat += {"<A href='?src=[REF(src)];[HrefToken()];f_dynamic_roundstart_remove=\ref[rule]'>-> [rule.name] <-</A><br>"}
+					dat += {"<A href='?src=[REF(src)];[HrefToken()];f_dynamic_roundstart_remove=[FAST_REF(rule)]'>-> [rule.name] <-</A><br>"}
 				dat += "<A href='?src=[REF(src)];[HrefToken()];f_dynamic_roundstart_clear=1'>(Clear Rulesets)</A><br>"
 			dat += "<A href='?src=[REF(src)];[HrefToken()];f_dynamic_options=1'>(Dynamic mode options)</A><br>"
 		else if (SSticker.IsRoundInProgress())
@@ -785,7 +787,7 @@
 		if(logout && CONFIG_GET(flag/announce_admin_logout))
 			string = pick(
 				"Admin logout: [key_name(src)]")
-		else if(!logout && CONFIG_GET(flag/announce_admin_login) && (prefs.toggles & PREFTOGGLE_ANNOUNCE_LOGIN))
+		else if(!logout && CONFIG_GET(flag/announce_admin_login) && prefs?.read_player_preference(/datum/preference/toggle/announce_login))
 			string = pick(
 				"Admin login: [key_name(src)]")
 		if(string)
@@ -796,5 +798,5 @@
 	if(isnull(sound))
 		return
 	for(var/client/C as anything in GLOB.admins)
-		if(C.prefs.toggles & PREFTOGGLE_2_SOUND_ADMINALERT)
+		if(C.prefs.read_player_preference(/datum/preference/toggle/sound_adminalert))
 			SEND_SOUND(C, sound)

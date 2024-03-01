@@ -4,14 +4,14 @@
 		return
 
 	var/list/modifiers = params2list(params)
-	if(modifiers["shift"])
+	if(LAZYACCESS(modifiers, SHIFT_CLICK))
 		ShiftClickOn(A)
 		return
-	if(modifiers["alt"])
+	if(LAZYACCESS(modifiers, ALT_CLICK))
 		AltClickNoInteract(src, A)
 		return
 
-	if(modifiers["ctrl"])
+	if(LAZYACCESS(modifiers, CTRL_CLICK))
 		CtrlClickOn(A)
 		return
 
@@ -40,7 +40,7 @@
 	..()
 
 // Orbit: literally obrits people like how ghosts do
-/mob/living/simple_animal/revenant/proc/check_orbitable(atom/A)
+/mob/living/simple_animal/revenant/check_orbitable(atom/A)
 	if(revealed)
 		to_chat(src, "<span class='revenwarning'>You can't orbit while you're revealed!</span>")
 		return
@@ -52,10 +52,7 @@
 		return
 	if(notransform || inhibited || !incorporeal_move_check(A))
 		return
-	var/icon/I = icon(A.icon, A.icon_state, A.dir)
-	var/orbitsize = (I.Width()+I.Height())*0.5
-	orbitsize -= (orbitsize/world.icon_size)*(world.icon_size*0.25)
-	orbit(A, orbitsize)
+	..()
 
 /mob/living/simple_animal/revenant/orbit(atom/target)
 	setDir(SOUTH) // reset dir so the right directional sprites show up
@@ -72,7 +69,7 @@
 	if(orbiting)
 		to_chat(src, "<span class='revenwarning'>You can't siphon essence during orbiting!</span>")
 		return
-	if(!target.stat && !target.stam_paralyzed)
+	if(!target.stat && !HAS_TRAIT_FROM(target, TRAIT_INCAPACITATED, STAMINA))
 		to_chat(src, "<span class='revennotice'>[target.p_their(TRUE)] soul is too strong to harvest.</span>")
 		if(prob(10))
 			to_chat(target, "You feel as if you are being watched.")
@@ -100,7 +97,7 @@
 				if(90 to INFINITY)
 					to_chat(src, "<span class='revenbignotice'>Ah, the perfect soul. [target] will yield massive amounts of essence to you.</span>")
 			if(do_after(src, rand(15, 25), target, timed_action_flags = IGNORE_HELD_ITEM)) //how about now
-				if(!target.stat && !target.stam_paralyzed)
+				if(!target.stat && !HAS_TRAIT_FROM(target, TRAIT_INCAPACITATED, STAMINA))
 					to_chat(src, "<span class='revenwarning'>[target.p_theyre(TRUE)] now powerful enough to fight off your draining.</span>")
 					to_chat(target, "<span class='boldannounce'>You feel something tugging across your body before subsiding.</span>")
 					draining = 0
@@ -120,7 +117,7 @@
 											   "<span class='revenwarning'>Violet lights, dancing in your vision, receding--</span>")
 					draining = FALSE
 					return
-				var/datum/beam/B = Beam(target,icon_state="drain_life",time=INFINITY)
+				var/datum/beam/B = Beam(target,icon_state="drain_life")
 				if(do_after(src, 46, target, timed_action_flags = IGNORE_HELD_ITEM)) //As one cannot prove the existance of ghosts, ghosts cannot prove the existance of the target they were draining.
 					change_essence_amount(essence_drained, FALSE, target)
 					if(essence_drained <= 90 && target.stat != DEAD)
@@ -134,7 +131,9 @@
 					target.visible_message("<span class='warning'>[target] slumps onto the ground.</span>", \
 										   "<span class='revenwarning'>Violets lights, dancing in your vision, getting clo--</span>")
 					drained_mobs.Add(target)
-					target.death(0)
+					if(target.stat != DEAD)
+						target.investigate_log("has died from revenant harvest.", INVESTIGATE_DEATHS)
+					target.death(FALSE)
 				else
 					to_chat(src, "<span class='revenwarning'>[target ? "[target] has":"[target.p_theyve(TRUE)]"] been drawn out of your grasp. The link has been broken.</span>")
 					if(target) //Wait, target is WHERE NOW?
@@ -203,6 +202,38 @@
 	boldnotice = "revenboldnotice"
 	holy_check = TRUE
 
+/obj/effect/proc_holder/spell/targeted/telepathy/revenant/cast(list/targets, mob/living/simple_animal/revenant/user = usr)
+	for(var/mob/living/M in targets)
+		if(istype(M.get_item_by_slot(ITEM_SLOT_HEAD), /obj/item/clothing/head/foilhat))
+			to_chat(user, "<span class='warning'>It appears the target's mind is ironclad! No getting a message in there!</span>")
+			return
+		if(M.anti_magic_check(magic_check, holy_check)) //hear no evil
+			to_chat(user, "<span class='[boldnotice]'>Something is blocking your power into their mind!</span>")
+
+
+		var/msg = stripped_input(usr, "What do you wish to tell [M]?", null, "")
+		if(!msg)
+			charge_counter = charge_max
+			return
+		if(CHAT_FILTER_CHECK(msg))
+			to_chat(user, "<span class='warning'>Your message contains forbidden words.</span>")
+			return
+		msg = user.treat_message_min(msg)
+		log_directed_talk(user, M, msg, LOG_SAY, "[name]")
+
+		to_chat(user, "<span class='[boldnotice]'>You transmit to [M]:</span> <span class='[notice]'>[msg]</span>")
+		to_chat(M, "<span class='[boldnotice]'>You hear something haunting...</span> <span class='[notice]'>[msg]</span>")
+		user.create_private_chat_message(message="...[msg]",
+									message_language = /datum/language/metalanguage,
+									hearers=list(user, M))
+		for(var/ded in GLOB.dead_mob_list)
+			if(!isobserver(ded))
+				continue
+			var/follow_rev = FOLLOW_LINK(ded, user)
+			var/follow_whispee = FOLLOW_LINK(ded, M)
+			to_chat(ded, "[follow_rev] <span class='[boldnotice]'>[user] [name]:</span> <span class='[notice]'>\"[msg]\" to</span> [follow_whispee] <span class='name'>[M]</span>")
+
+
 /obj/effect/proc_holder/spell/self/revenant_phase_shift
 	name = "Phase Shift"
 	desc = "Shift in and out of your corporeal form"
@@ -217,6 +248,8 @@
 	if(!isrevenant(user))
 		return FALSE
 	var/mob/living/simple_animal/revenant/revenant = user
+	if(!revenant.castcheck(0))
+		return FALSE
 	// if they're trapped in consecrated tiles, they can get out with this. but they can't hide back on these tiles.
 	if(revenant.incorporeal_move != INCORPOREAL_MOVE_JAUNT)
 		var/turf/open/floor/stepTurf = get_turf(user)
@@ -331,9 +364,9 @@
 	for(var/mob/living/carbon/human/M in hearers(shock_range, L))
 		if(M == user)
 			continue
-		L.Beam(M,icon_state="purple_lightning",time=5)
+		L.Beam(M,icon_state="purple_lightning", time = 5)
 		if(!M.anti_magic_check(FALSE, TRUE))
-			M.electrocute_act(shock_damage, L, safety=TRUE)
+			M.electrocute_act(shock_damage, L, flags = SHOCK_NOGLOVES)
 		do_sparks(4, FALSE, M)
 		playsound(M, 'sound/machines/defib_zap.ogg', 50, 1, -1)
 
@@ -361,7 +394,7 @@
 
 	if(!isplatingturf(T) && !istype(T, /turf/open/floor/engine/cult) && isfloorturf(T) && prob(15))
 		var/turf/open/floor/floor = T
-		if(floor.intact && floor.floor_tile)
+		if(floor.overfloor_placed && floor.floor_tile)
 			new floor.floor_tile(floor)
 		floor.broken = 0
 		floor.burnt = 0

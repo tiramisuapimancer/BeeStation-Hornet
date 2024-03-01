@@ -1,20 +1,37 @@
 #define MAX_ADMINBANS_PER_ADMIN 1
 #define MAX_ADMINBANS_PER_HEADMIN 3
 
+/// Process global ban types
+/proc/check_role_ban(ban_cache, role)
+	if(role in GLOB.antagonist_bannable_roles)
+		if((BAN_ROLE_ALL_ANTAGONISTS in ban_cache) || ("Syndicate" in ban_cache)) // Legacy "Syndicate" ban
+			return TRUE
+	if(role in GLOB.forced_bannable_roles)
+		if(BAN_ROLE_FORCED_ANTAGONISTS in ban_cache)
+			return TRUE
+	if(role in GLOB.ghost_role_bannable_roles)
+		if((BAN_ROLE_ALL_GHOST in ban_cache) || ("Lavaland" in ban_cache)) // Legacy "Lavaland" ban
+			return TRUE
+	return role in ban_cache
+
 //checks client ban cache or DB ban table if ckey is banned from one or more roles
 //doesn't return any details, use only for if statements
 /proc/is_banned_from(player_ckey, list/roles)
-	if(!player_ckey)
+	if(!player_ckey || isnull(roles) || (islist(roles) && !length(roles)))
 		return
-	var/client/C = GLOB.directory[player_ckey]
-	if(C)
-		if(!C.ban_cache)
-			build_ban_cache(C)
+	player_ckey = ckey(player_ckey)
+	var/client/player_client = GLOB.directory[player_ckey]
+	if(player_client)
+		var/list/ban_cache = retrieve_ban_cache(player_client)
+		if(!islist(ban_cache))
+			return // Disconnected while building the list.
 		if(islist(roles))
-			for(var/R in roles)
-				if(R in C.ban_cache)
+			for(var/role in roles)
+				if(!role)
+					continue
+				if(check_role_ban(ban_cache, role))
 					return TRUE //they're banned from at least one role, no need to keep checking
-		else if(roles in C.ban_cache)
+		else if(check_role_ban(ban_cache, roles))
 			return TRUE
 	else
 		var/values = list(
@@ -97,35 +114,78 @@
 		. += list(list("id" = query_check_ban.item[1], "bantime" = query_check_ban.item[2], "round_id" = query_check_ban.item[3], "expiration_time" = query_check_ban.item[4], "duration" = query_check_ban.item[5], "applies_to_admins" = query_check_ban.item[6], "reason" = query_check_ban.item[7], "server_name" = query_check_ban.item[8], "global_ban" = query_check_ban.item[9], "key" = query_check_ban.item[10], "ip" = query_check_ban.item[11], "computerid" = query_check_ban.item[12], "admin_key" = query_check_ban.item[13]))
 	qdel(query_check_ban)
 
-/proc/build_ban_cache(client/C)
+/// Gets the ban cache of the passed in client
+/// If the cache has not been generated, we start off a query
+/// If we still have a query going for this request, we just sleep until it's recieved back
+/proc/retrieve_ban_cache(client/player_client)
+	if(QDELETED(player_client))
+		return
+
+	if(player_client.ban_cache)
+		return player_client.ban_cache
+
+	var/config_delay = CONFIG_GET(number/blocking_query_timeout) SECONDS
+	// If we haven't got a query going right now, or we've timed out on the old query
+	if(player_client.ban_cache_start + config_delay < REALTIMEOFDAY)
+		return build_ban_cache(player_client)
+
+	// Ok so we've got a request going, lets start a wait cycle
+	// If we wait longer then config/db_ban_timeout we'll send another request
+	// We use timeofday here because we're talking human time
+	// We do NOT cache the start time because it can update, and we want it to be able to
+	while(player_client && player_client?.ban_cache_start + config_delay >= REALTIMEOFDAY && !player_client?.ban_cache)
+		// Wait a decisecond or two would ya?
+		// If this causes lag on client join, increase this delay. it doesn't need to be too fast since this should
+		// Realllly only happen near Login, and we're unlikely to make any new requests in that time
+		stoplag(2)
+
+	// If we have a ban cache, use it. if we've timed out, go ahead and start another query would you?
+	// This will update any other sleep loops, so we should only run one at a time
+	return player_client?.ban_cache || build_ban_cache(player_client)
+
+/proc/build_ban_cache(client/player_client)
 	if(!SSdbcore.Connect())
 		return
-	if(C && istype(C))
-		C.ban_cache = list()
-		var/is_admin = FALSE
-		if(GLOB.admin_datums[C.ckey] || GLOB.deadmins[C.ckey])
-			is_admin = TRUE
+	if(QDELETED(player_client))
+		return
+	var/current_time = REALTIMEOFDAY
+	player_client.ban_cache_start = current_time
 
-		var/ssqlname = CONFIG_GET(string/serversqlname)
-		var/server_check
-		if(CONFIG_GET(flag/respect_global_bans))
-			server_check = "(server_name = '[ssqlname]' OR global_ban = '1')"
-		else
-			server_check = "server_name = '[ssqlname]'"
+	var/ckey = player_client.ckey
+	var/list/ban_cache = list()
+	var/is_admin = FALSE
+	if(GLOB.admin_datums[ckey] || GLOB.deadmins[ckey])
+		is_admin = TRUE
 
-		var/datum/DBQuery/query_build_ban_cache = SSdbcore.NewQuery(
-			"SELECT role, applies_to_admins FROM [format_table_name("ban")] WHERE ckey = :ckey AND unbanned_datetime IS NULL AND (expiration_time IS NULL OR expiration_time > NOW()) AND [server_check]",
-			list("ckey" = C.ckey))
-		if(!query_build_ban_cache.warn_execute())
-			qdel(query_build_ban_cache)
-			return
-		while(query_build_ban_cache.NextRow())
-			if(is_admin && !text2num(query_build_ban_cache.item[2]))
-				continue
-			C.ban_cache[query_build_ban_cache.item[1]] = TRUE
+	var/ssqlname = CONFIG_GET(string/serversqlname)
+	var/server_check
+	if(CONFIG_GET(flag/respect_global_bans))
+		server_check = "(server_name = '[ssqlname]' OR global_ban = '1')"
+	else
+		server_check = "server_name = '[ssqlname]'"
+
+	var/datum/DBQuery/query_build_ban_cache = SSdbcore.NewQuery(
+		"SELECT role, applies_to_admins FROM [format_table_name("ban")] WHERE ckey = :ckey AND unbanned_datetime IS NULL AND (expiration_time IS NULL OR expiration_time > NOW()) AND [server_check]",
+		list("ckey" = ckey))
+	var/query_successful = query_build_ban_cache.warn_execute()
+	// After we sleep, we check if this was the most recent cache build, and if so we clear our start time
+	if(player_client?.ban_cache_start == current_time)
+		player_client.ban_cache_start = 0
+	if(!query_successful)
 		qdel(query_build_ban_cache)
+		return
 
-/datum/admins/proc/ban_panel(player_key, player_ip, player_cid, role, duration = 1440, applies_to_admins, reason, edit_id, page, admin_key, global_ban = TRUE)
+	while(query_build_ban_cache.NextRow())
+		if(is_admin && !text2num(query_build_ban_cache.item[2])) // check if applies to admins
+			continue
+		ban_cache[query_build_ban_cache.item[1]] = TRUE
+	qdel(query_build_ban_cache)
+	if(QDELETED(player_client)) // Disconnected while working with the DB.
+		return
+	player_client.ban_cache = ban_cache
+	return ban_cache
+
+/datum/admins/proc/ban_panel(player_key, player_ip, player_cid, role, duration = 1440, applies_to_admins, reason, edit_id, page, admin_key, global_ban = TRUE, force_cryo_after = FALSE)
 	var/suppressor
 	if(check_rights(R_SUPPRESS, FALSE))
 		suppressor = TRUE
@@ -135,7 +195,8 @@
 	var/datum/browser/panel = new(usr, "banpanel", "Banning Panel", 910, panel_height)
 	panel.add_stylesheet("admin_panelscss", 'html/admin/admin_panels.css')
 	panel.add_stylesheet("banpanelcss", 'html/admin/banpanel.css')
-	if(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) //some browsers (IE8) have trouble with unsupported css3 elements and DOM methods that break the panel's functionality, so we won't load those if a user is in no frills tgui mode since that's for similar compatability support
+	var/tgui_fancy = usr.client.prefs.read_player_preference(/datum/preference/toggle/tgui_fancy)
+	if(tgui_fancy) //some browsers (IE8) have trouble with unsupported css3 elements and DOM methods that break the panel's functionality, so we won't load those if a user is in no frills tgui mode since that's for similar compatability support
 		panel.add_stylesheet("admin_panelscss3", 'html/admin/admin_panels_css3.css')
 		panel.add_script("banpaneljs", 'html/admin/banpanel.js')
 	var/list/output = list("<form method='get' action='?src=[REF(src)]'>[HrefTokenFormField()]")
@@ -162,7 +223,10 @@
 	<input type='checkbox' id='lastconn' name='lastconn' value='1' [(isnull(duration) && !player_ip) || (!player_cid) ? " checked": ""]>
 	<div class='inputbox'></div></label>
 	<label class='inputlabel checkbox'>Applies to Admins
-	<input class='redact_incompatible' type='checkbox' id='applyadmins' name='applyadmins' value='1'[applies_to_admins ? " checked": ""]>
+	<input class='redact_incompatible' type='checkbox' id='applyadmins' name='applyadmins' value='1' [applies_to_admins ? " checked": ""]>
+	<div class='inputbox'></div></label>
+	<label class='inputlabel checkbox'>Force Cryo Afterwards
+	<input class='redact_incompatible' type='checkbox' id='forcecryo' name='forcecryo' value='1' [force_cryo_after ? " checked": ""]>
 	<div class='inputbox'></div></label>
 	<input type='submit' value='Submit'>
 	<br>
@@ -275,14 +339,15 @@
 				banned_from += query_get_banned_roles.item[1]
 			qdel(query_get_banned_roles)
 		var/break_counter = 0
-		output += "<div class='row'><div class='column'><label class='rolegroup command'><input type='checkbox' name='Command' class='hidden' [(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_checkboxes(this, \"_dep\")'" : ""]>Command</label><div class='content'>"
+		var/fancy_tgui = usr.client.prefs.read_player_preference(/datum/preference/toggle/tgui_fancy)
+		output += "<div class='row'><div class='column'><label class='rolegroup command'><input type='checkbox' name='Command' class='hidden' [fancy_tgui ? " onClick='toggle_checkboxes(this, \"_dep\")'" : ""]>Command</label><div class='content'>"
 		//all heads are listed twice so have a javascript call to toggle both their checkboxes when one is pressed
 		//for simplicity this also includes the captain even though it doesn't do anything
 		for(var/job in GLOB.command_positions)
 			if(break_counter > 0 && (break_counter % 3 == 0))
 				output += "<br>"
 			output += {"<label class='inputlabel checkbox'>[job]
-						<input type='checkbox' id='[job]_com' name='[job]' class='Command' value='1'[(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_head(this, \"_dep\")'" : ""]>
+						<input type='checkbox' id='[job]_com' name='[job]' class='Command' value='1'[fancy_tgui ? " onClick='toggle_head(this, \"_dep\")'" : ""]>
 						<div class='inputbox[(job in banned_from) ? " banned" : ""]'></div></label>
 			"}
 			break_counter++
@@ -295,9 +360,9 @@
 							"Supply" = GLOB.supply_positions)
 		for(var/department in job_lists)
 			//the first element is the department head so they need the same javascript call as above
-			output += "<div class='column'><label class='rolegroup [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
+			output += "<div class='column'><label class='rolegroup [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [fancy_tgui ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
 			output += {"<label class='inputlabel checkbox'>[job_lists[department][1]]
-						<input type='checkbox' id='[job_lists[department][1]]_dep' name='[job_lists[department][1]]' class='[department]' value='1'[(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_head(this, \"_com\")'" : ""]>
+						<input type='checkbox' id='[job_lists[department][1]]_dep' name='[job_lists[department][1]]' class='[department]' value='1'[fancy_tgui ? " onClick='toggle_head(this, \"_com\")'" : ""]>
 						<div class='inputbox[(job_lists[department][1] in banned_from) ? " banned" : ""]'></div></label>
 			"}
 			break_counter = 1
@@ -314,7 +379,7 @@
 		var/list/headless_job_lists = list("Silicon" = GLOB.nonhuman_positions,
 										"Abstract" = list("Appearance", "Emote", "OOC", "DSAY"))
 		for(var/department in headless_job_lists)
-			output += "<div class='column'><label class='rolegroup [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
+			output += "<div class='column'><label class='rolegroup [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [fancy_tgui ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
 			break_counter = 0
 			for(var/job in headless_job_lists[department])
 				if(break_counter > 0 && (break_counter % 3 == 0))
@@ -325,18 +390,16 @@
 				"}
 				break_counter++
 			output += "</div></div>"
-		var/list/long_job_lists = list(("Civilian" = GLOB.civilian_positions | JOB_NAME_GIMMICK),
-									"Ghost and Other Roles" = list(ROLE_BRAINWASHED, ROLE_HYPNOTIZED, ROLE_DEATHSQUAD, ROLE_DRONE, ROLE_LAVALAND, ROLE_MIND_TRANSFER, ROLE_POSIBRAIN, ROLE_SENTIENCE),
-									"Antagonist Positions" = list(ROLE_ABDUCTOR, ROLE_ALIEN, ROLE_BLOB, ROLE_SPACE_DRAGON,
-									ROLE_BROTHER, ROLE_CHANGELING, ROLE_CULTIST, ROLE_HERETIC,
-									ROLE_DEVIL, ROLE_INTERNAL_AFFAIRS, ROLE_MALF,
-									ROLE_NINJA, ROLE_OPERATIVE,
-									ROLE_SERVANT_OF_RATVAR,
-									ROLE_OVERTHROW, ROLE_REV, ROLE_REVENANT,
-									ROLE_REV_HEAD, ROLE_SYNDICATE,
-									ROLE_TRAITOR, ROLE_WIZARD, ROLE_HIVE, ROLE_GANG, ROLE_TERATOMA, ROLE_NIGHTMARE, ROLE_SPIDER, ROLE_MORPH, ROLE_SWARMER, ROLE_SPACE_PIRATE, ROLE_FUGITIVE, ROLE_FUGITIVE_HUNTER)) //ROLE_REV_HEAD is excluded from this because rev jobbans are handled by ROLE_REV
+		var/list/long_job_lists = list(
+			"Civilian" = GLOB.civilian_positions | JOB_NAME_GIMMICK,
+			"Antagonist Positions" = list(BAN_ROLE_ALL_ANTAGONISTS) + GLOB.antagonist_bannable_roles,
+			"Forced Antagonist Positions" = list(BAN_ROLE_FORCED_ANTAGONISTS) + GLOB.forced_bannable_roles,
+			"Ghost Roles" = list(BAN_ROLE_ALL_GHOST) + GLOB.ghost_role_bannable_roles,
+			"Other" = GLOB.other_bannable_roles,
+		)
+
 		for(var/department in long_job_lists)
-			output += "<div class='column'><label class='rolegroup long [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [(usr.client.prefs.toggles2 & PREFTOGGLE_2_FANCY_TGUI) ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
+			output += "<div class='column'><label class='rolegroup long [ckey(department)]'><input type='checkbox' name='[department]' class='hidden' [fancy_tgui ? " onClick='toggle_checkboxes(this, \"_com\")'" : ""]>[department]</label><div class='content'>"
 			break_counter = 0
 			for(var/job in long_job_lists[department])
 				if(break_counter > 0 && (break_counter % 10 == 0))
@@ -381,6 +444,7 @@
 	var/page
 	var/admin_key
 	var/redact
+	var/force_cryo_after = FALSE
 	var/list/changes = list()
 	var/list/roles_to_ban = list()
 	if(href_list["redactioncheck"])
@@ -420,6 +484,8 @@
 		if(redact)
 			error_state += "Admin bans can not be suppressed."
 		applies_to_admins = TRUE
+	if(href_list["forcecryo"])
+		force_cryo_after = TRUE
 	switch(href_list["radioservban"])
 		if("local")
 			if(CONFIG_GET(flag/disable_local_bans))
@@ -496,9 +562,9 @@
 	if(edit_id)
 		edit_ban(edit_id, player_key, ip_check, player_ip, cid_check, player_cid, use_last_connection, applies_to_admins, duration, interval, reason, global_ban, mirror_edit, old_key, old_ip, old_cid, old_applies, old_globalban, page, admin_key, changes)
 	else
-		create_ban(player_key, ip_check, player_ip, cid_check, player_cid, use_last_connection, applies_to_admins, duration, interval, severity, reason, global_ban, roles_to_ban, redact)
+		create_ban(player_key, ip_check, player_ip, cid_check, player_cid, use_last_connection, applies_to_admins, duration, interval, severity, reason, global_ban, roles_to_ban, redact, force_cryo_after)
 
-/datum/admins/proc/create_ban(player_key, ip_check, player_ip, cid_check, player_cid, use_last_connection, applies_to_admins, duration, interval, severity, reason, global_ban, list/roles_to_ban, redact = 0)
+/datum/admins/proc/create_ban(player_key, ip_check, player_ip, cid_check, player_cid, use_last_connection, applies_to_admins, duration, interval, severity, reason, global_ban, list/roles_to_ban, redact = FALSE, force_cryo_after = FALSE)
 	if(!check_rights(R_BAN))
 		return
 	if(!SSdbcore.Connect())
@@ -557,7 +623,8 @@
 		if(query_check_adminban_count.NextRow())
 			var/adminban_count = text2num(query_check_adminban_count.item[1])
 			var/max_adminbans = MAX_ADMINBANS_PER_ADMIN
-			if(R_EVERYTHING && !(R_EVERYTHING & rank.can_edit_rights)) //edit rights are a more effective way to check hierarchical rank since many non-headmins have R_PERMISSIONS now
+			//edit rights are a more effective way to check hierarchical rank since many non-headmins have R_PERMISSIONS
+			if(rank.can_edit_rights == R_EVERYTHING)
 				max_adminbans = MAX_ADMINBANS_PER_HEADMIN
 			if(adminban_count >= max_adminbans)
 				to_chat(usr, "<span class='danger'>You've already logged [max_adminbans] admin ban(s) or more. Do not abuse this function!</span>")
@@ -667,6 +734,8 @@
 				is_admin = TRUE
 			if(roles_to_ban[1] == "Server" && (!is_admin || (is_admin && applies_to_admins)))
 				qdel(i)
+	if(force_cryo_after)
+		force_cryo_ckey(player_ckey)
 
 /datum/admins/proc/unban_panel(player_key, admin_key, player_ip, player_cid, page = 0)
 	if(!check_rights(R_BAN))

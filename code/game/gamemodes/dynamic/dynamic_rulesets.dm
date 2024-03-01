@@ -18,12 +18,10 @@
 	var/list/mob/candidates = list()
 	/// List of players that were selected for this rule
 	var/list/datum/mind/assigned = list()
-	/// Preferences flag such as ROLE_WIZARD that need to be turned on for players to be antag
-	var/antag_flag = null
+	/// The /datum/role_preference typepath used for this ruleset.
+	var/role_preference = null
 	/// The antagonist datum that is assigned to the mobs mind on ruleset execution.
 	var/datum/antagonist/antag_datum = null
-	/// The required minimum account age for this ruleset.
-	var/minimum_required_age = 7
 	/// If set, and config flag protect_roles_from_antagonist is false, then the rule will not pick players from these roles.
 	var/list/protected_roles = list()
 	/// If set, rule will deny candidates from those roles always.
@@ -55,8 +53,6 @@
 	var/list/requirements = list(40,30,20,10,10,10,10,10,10,10)
 	/// Reference to the mode, use this instead of SSticker.mode.
 	var/datum/game_mode/dynamic/mode = null
-	/// If a role is to be considered another for the purpose of banning.
-	var/antag_flag_override = null
 	/// If a ruleset type which is in this list has been executed, then the ruleset will not be executed.
 	var/list/blocking_rules = list()
 	/// The minimum amount of players required for the rule to be considered.
@@ -87,14 +83,17 @@
 	/// Whether repeated_mode_adjust weight changes have been logged already.
 	var/logged_repeated_mode_adjust = FALSE
 
+	/// Was this ruleset spawned from the lategame mode?
+	var/lategame_spawned = FALSE
 
-/datum/dynamic_ruleset/New()
+
+/datum/dynamic_ruleset/New(datum/game_mode/dynamic/dynamic_mode)
 	// Rulesets can be instantiated more than once, such as when an admin clicks
 	// "Execute Midround Ruleset". Thus, it would be wrong to perform any
 	// side effects here. Dynamic rulesets should be stateless anyway.
 	SHOULD_NOT_OVERRIDE(TRUE)
 
-	mode = SSticker.mode
+	mode = dynamic_mode
 	..()
 
 /datum/dynamic_ruleset/roundstart // One or more of those drafted at roundstart
@@ -116,10 +115,12 @@
 		log_game("DYNAMIC: FAIL: [src] failed acceptable: maximum_players ([maximum_players]) < population ([population])")
 		return FALSE
 
+
 	pop_per_requirement = pop_per_requirement > 0 ? pop_per_requirement : mode.pop_per_requirement
 	indice_pop = min(requirements.len,round(population/pop_per_requirement)+1)
-	if (threat_level < requirements[indice_pop])
-		log_game("DYNAMIC: FAIL: [src] failed acceptable: threat_level ([threat_level]) < requirement ([requirements[indice_pop]])")
+	var/requirement = requirements[indice_pop]
+	if (threat_level < requirement)
+		log_game("DYNAMIC: FAIL: [src] failed acceptable: threat_level ([threat_level]) < requirement ([requirement])")
 		return FALSE
 
 	return TRUE
@@ -163,21 +164,23 @@
 
 /// Called on post_setup on roundstart and when the rule executes on midround and latejoin.
 /// Give your candidates or assignees equipment and antag datum here.
-/datum/dynamic_ruleset/proc/execute()
+/datum/dynamic_ruleset/proc/execute(forced = FALSE)
 	for(var/datum/mind/M in assigned)
 		M.add_antag_datum(antag_datum)
+		GLOB.pre_setup_antags -= M
 	return TRUE
 
 /// Here you can perform any additional checks you want. (such as checking the map etc)
 /// Remember that on roundstart no one knows what their job is at this point.
 /// IMPORTANT: If ready() returns TRUE, that means pre_execute() or execute() should never fail!
-/datum/dynamic_ruleset/proc/ready(forced = 0)
+/datum/dynamic_ruleset/proc/ready(forced = FALSE)
 	return check_candidates()
 
 /// Runs from gamemode process() if ruleset fails to start, like delayed rulesets not getting valid candidates.
 /// This one only handles refunding the threat, override in ruleset to clean up the rest.
 /datum/dynamic_ruleset/proc/clean_up()
-	mode.refund_threat(cost + (scaled_times * scaling_cost))
+	if(!lategame_spawned) // lategame execute failures shouldn't refund
+		mode.refund_threat(cost + (scaled_times * scaling_cost))
 	var/msg = "[ruletype] [name] refunded [cost + (scaled_times * scaling_cost)]. Failed to execute."
 	mode.threat_log += "[worldtime2text()]: [msg]"
 	message_admins(msg)
@@ -212,11 +215,11 @@
 
 /// Checks if there are enough candidates to run, and logs otherwise
 /datum/dynamic_ruleset/proc/check_candidates()
-	if (required_candidates <= candidates.len)
-		return TRUE
-
-	log_game("DYNAMIC: FAIL: [src] does not have enough candidates ([required_candidates] needed, [candidates.len] found)")
-	return FALSE
+	var/candidates_amt = length(candidates)
+	if (required_candidates > candidates_amt)
+		log_game("DYNAMIC: FAIL: [src] does not have enough candidates ([required_candidates] needed, [candidates_amt] found)")
+		return FALSE
+	return TRUE
 
 /// Here you can remove candidates that do not meet your requirements.
 /// This means if their job is not correct or they have disconnected you can remove them from candidates here.
@@ -231,6 +234,9 @@
 
 /// Checks if the ruleset is "dead", where all the antags are either dead or deconverted.
 /datum/dynamic_ruleset/proc/is_dead()
+	// Don't let dead threats affect simulation results
+	if (mode.simulated)
+		return FALSE
 	for(var/datum/mind/mind in assigned)
 		var/mob/living/body = mind.current
 		// If they have no body, they're dead for realsies.
@@ -251,7 +257,7 @@
 			if(body.soul_departed() || mind.hellbound)
 				continue
 			// Are they in medbay or an operating table/stasis bed, and have been dead for less than 20 minutes? If so, they're probably being revived.
-			if(world.time <= (mind.last_death + 15 MINUTES) && (istype(get_area(body), /area/medical) || (locate(/obj/machinery/stasis) in body.loc) || (locate(/obj/structure/table/optable) in body.loc)))
+			if((mode.simulated_time || world.time) <= (mind.last_death + 15 MINUTES) && (istype(get_area(body), /area/medical) || (locate(/obj/machinery/stasis) in body.loc) || (locate(/obj/structure/table/optable) in body.loc)))
 				log_undead()
 				return FALSE
 		else
@@ -282,7 +288,7 @@
 
 /// Picks a candidate from a list, while potentially taking antag rep into consideration.
 /datum/dynamic_ruleset/proc/antag_pick_n_take(list/candidates)
-	. = (mode && consider_antag_rep) ? mode.antag_pick(candidates, antag_flag) : pick(candidates)
+	. = (mode && consider_antag_rep) ? mode.antag_pick(candidates, role_preference) : pick(candidates)
 	if(.)
 		candidates -= .
 
@@ -298,19 +304,19 @@
 		var/client/client = GET_CLIENT(P)
 		if (!client || !P.mind) // Are they connected?
 			candidates.Remove(P)
-		else if(!mode.check_age(client, minimum_required_age))
+			continue
+
+		if(!client.should_include_for_role(
+			banning_key = initial(antag_datum.banning_key),
+			role_preference_key = role_preference,
+			req_hours = initial(antag_datum.required_living_playtime)
+		))
 			candidates.Remove(P)
 			continue
+
 		if(P.mind.special_role) // We really don't want to give antag to an antag.
 			candidates.Remove(P)
-		else if(antag_flag_override)
-			if(!(antag_flag_override in client.prefs.be_special) || is_banned_from(P.ckey, list(antag_flag_override, ROLE_SYNDICATE)))
-				candidates.Remove(P)
-				continue
-		else
-			if(!(antag_flag in client.prefs.be_special) || is_banned_from(P.ckey, list(antag_flag, ROLE_SYNDICATE)))
-				candidates.Remove(P)
-				continue
+			continue
 
 /// Do your checks if the ruleset is ready to be executed here.
 /// Should ignore certain checks if forced is TRUE

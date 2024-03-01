@@ -42,12 +42,13 @@
 	movement_type = FLYING
 	move_resist = MOVE_FORCE_OVERPOWERING
 	mob_size = MOB_SIZE_TINY
-	pass_flags = PASSTABLE | PASSGRILLE | PASSMOB
+	pass_flags = PASSTABLE | PASSMOB
 	speed = 1
 	unique_name = TRUE
 	hud_possible = list(ANTAG_HUD)
 	hud_type = /datum/hud/revenant
 
+	chat_color = "#9A5ACB"
 	mobchatspan = "revenminor"
 
 	var/essence = 75 //The resource, and health, of revenants.
@@ -80,6 +81,8 @@
 	check_rev_teleport() // they're spawned in non-station for some reason...
 	random_revenant_name()
 	AddComponent(/datum/component/tracking_beacon, "ghost", null, null, TRUE, "#9e4d91", TRUE, TRUE, "#490066")
+	grant_all_languages(TRUE, FALSE, FALSE, LANGUAGE_REVENANT) // rev can understand every langauge
+	ADD_TRAIT(src, TRAIT_FREE_HYPERSPACE_MOVEMENT, INNATE_TRAIT)
 
 /mob/living/simple_animal/revenant/onTransitZ(old_z, new_z)
 	. = ..()
@@ -118,7 +121,7 @@
 	to_chat(src, "<b>You are invincible and invisible to everyone but other ghosts. Most abilities will reveal you, rendering you vulnerable.</b>")
 	to_chat(src, "<b>To function, you are to drain the life essence from humans. This essence is a resource, as well as your health, and will power all of your abilities.</b>")
 	to_chat(src, "<b><i>You do not remember anything of your past lives, nor will you remember anything about this one after your death.</i></b>")
-	to_chat(src, "<b>Be sure to read <a href=\"https://tgstation13.org/wiki/Revenant\">the wiki page</a> to learn more.</b>")
+	to_chat(src, "<b>Be sure to read <a href=\"[(CONFIG_GET(string/wikiurl)) ? (CONFIG_GET(string/wikiurl)) : "https://wiki.beestation13.com/view"]/Revenant\">the wiki page</a> to learn more.</b>")
 	if(!generated_objectives_and_spells)
 		generated_objectives_and_spells = TRUE
 		mind.assigned_role = ROLE_REVENANT
@@ -175,18 +178,26 @@
 /mob/living/simple_animal/revenant/say(message, bubble_type, var/list/spans = list(), sanitize = TRUE, datum/language/language = null, ignore_spam = FALSE, forced = null)
 	if(!message)
 		return
+
 	if(CHAT_FILTER_CHECK(message))
 		to_chat(usr, "<span class='warning'>Your message contains forbidden words.</span>")
 		return
 	message = treat_message_min(message)
 	src.log_talk(message, LOG_SAY)
-	var/rendered = "<span class='revennotice'><b>[src]</b> says, \"[message]\"</span>"
+	var/rendered = "<span class='revennotice'><b>[src]</b> haunts, \"[message]\"</span>"
+	var/rendered_yourself = "<span class='revennotice'>You haunt to ghosts: [message]</span>"
+	var/list/hearers = list()
 	for(var/mob/M in GLOB.mob_list)
-		if(isrevenant(M))
+		if(M == src)
+			hearers += M
+			to_chat(M, rendered_yourself)
+		else if(isrevenant(M) && get_dist(M, src) < 7)
+			hearers += M
 			to_chat(M, rendered)
 		else if(isobserver(M))
 			var/link = FOLLOW_LINK(M, src)
 			to_chat(M, "[link] [rendered]")
+	create_private_chat_message("...[message]", message_language = /datum/language/metalanguage, hearers = hearers)
 	return
 
 
@@ -433,7 +444,7 @@
 	name = "glimmering residue"
 	desc = "A pile of fine blue dust. Small tendrils of violet mist swirl around it."
 	icon = 'icons/effects/effects.dmi'
-	icon_state = "revenantEctoplasm"
+	icon_state = "mysticplasm"
 	w_class = WEIGHT_CLASS_SMALL
 	var/essence = 75 //the maximum essence of the reforming revenant
 	var/reforming = TRUE
@@ -492,7 +503,7 @@
 				break
 	if(!key_of_revenant)
 		message_admins("The new revenant's old client either could not be found or is in a new, living mob - grabbing a random candidate instead...")
-		var/list/candidates = pollCandidatesForMob("Do you want to be [revenant.name] (reforming)?", ROLE_REVENANT, null, ROLE_REVENANT, 50, revenant)
+		var/list/candidates = poll_candidates_for_mob("Do you want to be [revenant.name] (reforming)?", ROLE_REVENANT, /datum/role_preference/midround_ghost/revenant, 7.5 SECONDS, revenant)
 		if(!LAZYLEN(candidates))
 			qdel(revenant)
 			message_admins("No candidates were found for the new revenant. Oh well!")
@@ -519,10 +530,10 @@
 	revenant = null
 	qdel(src)
 
-/obj/item/ectoplasm/revenant/suicide_act(mob/user)
+/obj/item/ectoplasm/revenant/suicide_act(mob/living/user)
 	user.visible_message("<span class='suicide'>[user] is inhaling [src]! It looks like [user.p_theyre()] trying to visit the shadow realm!</span>")
 	scatter()
-	return (OXYLOSS)
+	return OXYLOSS
 
 /obj/item/ectoplasm/revenant/Destroy()
 	if(!QDELETED(revenant))

@@ -376,7 +376,7 @@
 	pixel_x = -24
 	},
 /turf/open/floor/wood{
-	icon_state = "wood-broken"
+	broken = 1
 	},
 /area/shuttle/hunter)
 "mM" = (
@@ -749,7 +749,7 @@
 	pixel_x = 3;
 	pixel_y = 3
 	},
-/obj/item/storage/firstaid/medical/doctorbag,
+/obj/item/storage/firstaid/medical,
 /turf/open/floor/plasteel/grid/steel,
 /area/shuttle/hunter)
 "Cc" = (
@@ -776,11 +776,11 @@
 /obj/item/melee/baton/loaded{
 	pixel_x = 1
 	},
-/obj/item/reagent_containers/spray/pepper{
+/obj/item/reagent_containers/peppercloud_deployer{
 	pixel_x = 3;
 	pixel_y = -4
 	},
-/obj/item/reagent_containers/spray/pepper{
+/obj/item/reagent_containers/peppercloud_deployer{
 	pixel_x = 8;
 	pixel_y = -4
 	},
@@ -1369,7 +1369,7 @@
 /turf/open/floor/plasteel/tech/grid,
 /area/shuttle/hunter)
 "WJ" = (
-/obj/machinery/computer/camera_advanced{
+/obj/machinery/computer/camera_advanced/bounty_hunter{
 	dir = 8
 	},
 /obj/effect/decal/cleanable/dirt/dust,
